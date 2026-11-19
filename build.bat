@@ -94,37 +94,55 @@ echo [2/3] Checking Windows Driver Kit ...
 set "WDK_ROOT=%ProgramFiles(x86)%\Windows Kits\10"
 set "WDKContentRoot=%WDK_ROOT%\"
 
-rem Pick the newest SDK target that is COMPLETE: kernel-mode headers
-rem (ntddk.h), WindowsDriver targets and the DriverKit MSBuild task DLL.
-rem A half-installed WDK (targets present, task DLL missing) must be skipped.
+rem Prefer the newest WDK that has headers, build targets AND a DriverKit
+rem task DLL. If no version has the DLL, fall back to the newest one that has
+rem headers/targets and skip its version-validation step during the build.
 set "WDK_VER="
-set "WDK_INCOMPLETE="
+set "WDK_VER_NODLL="
+set "WDK_NO_TASKS="
 for /f "usebackq delims=" %%i in (`dir /b /ad /o-n "%WDK_ROOT%\Include\10.*" 2^>nul`) do (
     if not defined WDK_VER call :check_wdk "%%i"
 )
+if not defined WDK_VER if defined WDK_VER_NODLL (
+    set "WDK_VER=%WDK_VER_NODLL%"
+    set "WDK_NO_TASKS=1"
+)
 
 if not defined WDK_VER (
-    echo [ERROR] No complete WDK installation found under "%WDK_ROOT%".
-    if defined WDK_INCOMPLETE (
-        echo         WDK %WDK_INCOMPLETE% exists but its build task DLL is missing:
-        echo         build\%WDK_INCOMPLETE%\bin\Microsoft.DriverKit.Build.Tasks.*.dll
-        echo         The WDK installation is incomplete or damaged.
-        echo         Run the WDK installer and choose "Repair", or reinstall
-        echo         the "Windows Driver Kit" component in Visual Studio Installer.
-    ) else (
-        echo         Install the "Windows Driver Kit" component via Visual Studio
-        echo         Installer ^(or run the WDK installer^).
-    )
+    echo [ERROR] No usable WDK installation found under "%WDK_ROOT%".
+    echo         Install the "Windows Driver Kit" component via Visual Studio
+    echo         Installer ^(or run the WDK installer^).
     exit /b 1
 )
+if defined WDK_NO_TASKS echo         DriverKit task DLL: missing ^(version validation will be skipped^)
 echo         WDK headers: %WDK_VER%
 
 echo [3/3] Building ...
 echo.
 if exist "%BUILD_LOG%" del /f /q "%BUILD_LOG%" >nul 2>&1
-"%MSBUILD%" "%SOLUTION%" -nologo -m -t:Build -p:Configuration=%CONFIG% -p:Platform=%PLATFORM% -p:WindowsTargetPlatformVersion=%WDK_VER% -p:WindowsSDKVersion=%WDK_VER%\ -v:minimal -fl "-flp:LogFile=%BUILD_LOG%;Verbosity=normal"
+
+set "EXTRA_ARGS="
+if defined WDK_NO_TASKS if exist "%ROOT%wdk_fallback.targets" set "EXTRA_ARGS=-p:ForceImportAfterCppTargets="%ROOT%wdk_fallback.targets""
+
+"%MSBUILD%" "%SOLUTION%" -nologo -m -t:Build -p:Configuration=%CONFIG% -p:Platform=%PLATFORM% -p:WindowsTargetPlatformVersion=%WDK_VER% -p:WindowsSDKVersion=%WDK_VER%\ %EXTRA_ARGS% -v:minimal -fl "-flp:LogFile=%BUILD_LOG%;Verbosity=normal"
+if not errorlevel 1 goto :build_succeeded
+
+rem The WDK DriverKit task assembly may exist but fail to load (preview or
+rem partially installed WDK, MSB4062). ValidateNTTargetVersion only checks
+rem TargetVersion, so retry with that step disabled.
+if defined WDK_NO_TASKS goto :build_failed
+findstr /i /c:"MSB4062" /c:"DriverKit.Build.Tasks" "%BUILD_LOG%" >nul 2>&1
+if errorlevel 1 goto :build_failed
+if not exist "%ROOT%wdk_fallback.targets" goto :build_failed
+
+echo.
+echo [WARN]  WDK DriverKit build task could not be loaded ^(MSB4062^).
+echo         Retrying with ValidateNTTargetVersion disabled...
+echo.
+"%MSBUILD%" "%SOLUTION%" -nologo -m -t:Build -p:Configuration=%CONFIG% -p:Platform=%PLATFORM% -p:WindowsTargetPlatformVersion=%WDK_VER% -p:WindowsSDKVersion=%WDK_VER%\ -p:ForceImportAfterCppTargets="%ROOT%wdk_fallback.targets" -v:minimal -fl "-flp:LogFile=%BUILD_LOG%;Verbosity=normal"
 if errorlevel 1 goto :build_failed
 
+:build_succeeded
 echo.
 echo Build finished.
 set "OUTDIR=%ROOT%%PLATFORM%\%CONFIG%"
@@ -146,6 +164,7 @@ for %%I in ("%MSBUILD%") do set "MSBUILD_DIR=%%~dpI"
 (
     echo === kurasagi build diagnostics ===
     echo WDK_VER=%WDK_VER%
+    echo WDK_NO_TASKS=%WDK_NO_TASKS%
     echo WDK_ROOT=%WDK_ROOT%
     echo WDKContentRoot=%WDKContentRoot%
     echo MSBUILD=%MSBUILD%
@@ -163,6 +182,12 @@ for %%I in ("%MSBUILD%") do set "MSBUILD_DIR=%%~dpI"
     echo.
     echo --- WindowsDriver props files ---
     dir /b /s "%WDK_ROOT%\build\WindowsDriver*.props" 2^>^&1
+    echo.
+    echo --- DriverKit task DLLs ---
+    dir /b /s "%WDK_ROOT%\build\Microsoft.DriverKit.Build.Tasks.*.dll" 2^>^&1
+    echo.
+    echo --- build\bin contents ---
+    dir /b "%WDK_ROOT%\build\bin" 2^>^&1
     echo.
     echo --- PlatformToolsets ---
     dir /b "%MSBUILD_DIR%..\..\Microsoft\VC\v170\Platforms\x64\PlatformToolsets" 2^>^&1
@@ -189,14 +214,16 @@ set "DRIVER_TOOLSET=1"
 exit /b 0
 
 
-rem A usable WDK target needs headers, WindowsDriver targets and the task DLL.
+rem A usable WDK target needs kernel headers and WindowsDriver build targets.
+rem Versions with a DriverKit task DLL are preferred; ones without are kept
+rem as a fallback (their version validation step is skipped).
 :check_wdk
 set "CAND_VER=%~1"
 if not exist "%WDK_ROOT%\Include\%CAND_VER%\km\ntddk.h" exit /b 1
 if not exist "%WDK_ROOT%\build\%CAND_VER%\WindowsDriver.common.targets" exit /b 1
-if not exist "%WDK_ROOT%\build\%CAND_VER%\bin\Microsoft.DriverKit.Build.Tasks.*.dll" (
-    if not defined WDK_INCOMPLETE set "WDK_INCOMPLETE=%CAND_VER%"
-    exit /b 1
+if exist "%WDK_ROOT%\build\%CAND_VER%\bin\Microsoft.DriverKit.Build.Tasks.*.dll" (
+    set "WDK_VER=%CAND_VER%"
+) else (
+    if not defined WDK_VER_NODLL set "WDK_VER_NODLL=%CAND_VER%"
 )
-set "WDK_VER=%CAND_VER%"
 exit /b 0

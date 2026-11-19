@@ -35,7 +35,7 @@ build.bat Release x64 nopause   :: 不暂停（适合 CI）
 脚本会自动完成：
 
 - 定位 Visual Studio 的 MSBuild（优先选择带 `WindowsKernelModeDriver10.0` 驱动工具集的实例）
-- 校验 WDK 头文件与 DriverKit 构建任务是否完整，自动跳过损坏的 WDK 版本
+- 校验 WDK 头文件与构建规则；若 DriverKit 构建任务缺失或无法加载（MSB4062），会自动跳过版本校验步骤继续编译
 - 编译整个解决方案并输出完整日志 `build.log`，失败时生成环境诊断 `build.diag.txt`
 
 ## 加载

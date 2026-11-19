@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Fallback imported by build.bat via ForceImportAfterCppTargets.
+
+    Some WDK installations (preview builds or partially installed ones) ship
+    WindowsDriver.common.targets without a loadable DriverKit MSBuild task
+    assembly (Microsoft.DriverKit.Build.Tasks.*.dll). MSBuild then fails with
+    MSB4062 before the compiler is invoked.
+
+    ValidateNTTargetVersion only checks that TargetVersion matches the
+    installed SDK. Overriding it with an empty target skips that check and
+    lets ClCompile/Link proceed; it does not affect the generated .sys.
+  -->
+  <Target Name="ValidateNTTargetVersion" />
+</Project>
