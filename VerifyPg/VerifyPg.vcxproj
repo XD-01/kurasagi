@@ -26,6 +26,7 @@
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
     <RootNamespace>VerifyPg</RootNamespace>
+    <WindowsTargetPlatformVersion Condition="'$(WindowsTargetPlatformVersion)' == ''">10.0.28000.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -148,6 +149,9 @@
     <ClCompile Include="Memory.c" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <!-- Skip WDK NT target version validation when the DriverKit task assembly
+       is missing or cannot be loaded (MSB4062); it does not affect linking. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\wdk_fallback.targets" Condition="Exists('$(MSBuildThisFileDirectory)..\wdk_fallback.targets')" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
